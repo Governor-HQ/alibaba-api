@@ -20,10 +20,16 @@ export async function GET(request) {
     const paystackData = await paystackResponse.json();
 
     const isSeatBooking = reference.startsWith('ALB-BUS-');
+    const isCharter = reference.startsWith('ALB-CHT-');
 
     if (paystackData.status && paystackData.data.status === 'success') {
       // Update our database too, in case the webhook hasn't arrived yet
-      if (isSeatBooking) {
+      if (isCharter) {
+        await pool.query(
+          `UPDATE charter_bookings SET payment_status = 'paid', status = 'confirmed', updated_at = NOW() WHERE payment_reference = $1`,
+          [reference]
+        );
+      } else if (isSeatBooking) {
         await pool.query(
           `UPDATE seat_bookings SET payment_status = 'paid', status = 'confirmed' WHERE payment_reference = $1`,
           [reference]
@@ -34,6 +40,17 @@ export async function GET(request) {
           [reference]
         );
       }
+    }
+
+    if (isCharter) {
+      const chRes = await pool.query(
+        `SELECT * FROM charter_bookings WHERE payment_reference = $1`,
+        [reference]
+      );
+      if (chRes.rows.length === 0) {
+        return NextResponse.json({ success: false, error: 'Charter not found' }, { status: 404 });
+      }
+      return NextResponse.json({ success: true, booking_type: 'charter', booking: chRes.rows[0] });
     }
 
     if (isSeatBooking) {

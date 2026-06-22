@@ -24,8 +24,14 @@ export async function POST(request) {
 
       // Car rental bookings use references starting with ALB-PAY-
       // Bus seat bookings use references starting with ALB-BUS-
+      // Charter payments use references starting with ALB-CHTPAY-
       // We update whichever table the reference actually belongs to.
-      if (reference.startsWith('ALB-BUS-')) {
+      if (reference.startsWith('ALB-CHT-')) {
+        await pool.query(
+          `UPDATE charter_bookings SET payment_status = 'paid', status = 'confirmed', updated_at = NOW() WHERE payment_reference = $1`,
+          [reference]
+        );
+      } else if (reference.startsWith('ALB-BUS-')) {
         await pool.query(
           `UPDATE seat_bookings SET payment_status = 'paid', status = 'confirmed' WHERE payment_reference = $1`,
           [reference]
