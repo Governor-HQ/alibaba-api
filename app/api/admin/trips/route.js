@@ -19,7 +19,7 @@ export async function GET(request) {
   try {
     const result = await pool.query(
       `SELECT 
-        t.id, t.departure_date, t.departure_time, t.status,
+        t.id, t.departure_date, t.departure_time, t.status, t.driver_id, t.trip_status,
         r.id as route_id, r.origin, r.destination, r.price,
         b.id as bus_id, b.name as bus_name, b.total_seats,
         (SELECT COUNT(*) FROM seat_bookings sb 
