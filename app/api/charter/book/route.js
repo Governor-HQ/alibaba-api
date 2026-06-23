@@ -89,7 +89,7 @@ export async function POST(request) {
         email: contact_email,
         amount: Math.round(totalPrice * 100),
         reference: reference,
-        callback_url: `${process.env.FRONTEND_URL}/pages/charter-confirm.html`
+        callback_url: `${process.env.FRONTEND_URL}/pages/booking-confirm.html`
       })
     });
     const paystackData = await paystackResponse.json();
