@@ -4,17 +4,10 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
-
-function isAuthorized(request) {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader) return false;
-  return authHeader === `Bearer ${process.env.ADMIN_SECRET}`;
-}
+import { requireAdmin } from '@/lib/admin-auth';
 
 export async function GET(request) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-  }
+  const _auth = await requireAdmin(request, 'routes_manage'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
 
   try {
     const result = await pool.query('SELECT * FROM routes ORDER BY origin, destination');
@@ -25,9 +18,7 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-  }
+  const _auth = await requireAdmin(request, 'routes_manage'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
 
   try {
     const body = await request.json();

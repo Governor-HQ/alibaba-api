@@ -3,10 +3,9 @@
 // Also: GET returns one_way_factor; POST with { one_way_factor } updates the factor
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
-function isAuthorized(req){ return req.headers.get('authorization') === `Bearer ${process.env.ADMIN_SECRET}`; }
-
+import { requireAdmin } from '@/lib/admin-auth';
 export async function GET(request) {
-  if (!isAuthorized(request)) return NextResponse.json({ success:false, error:'Unauthorized' }, { status:401 });
+  const _auth = await requireAdmin(request, 'charter_pricing'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
   try {
     const [zones, types, prices, factor] = await Promise.all([
       pool.query('SELECT id, name FROM charter_zones ORDER BY name ASC'),
@@ -25,7 +24,7 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
-  if (!isAuthorized(request)) return NextResponse.json({ success:false, error:'Unauthorized' }, { status:401 });
+  const _auth = await requireAdmin(request, 'charter_pricing'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
   try {
     const body = await request.json();
 

@@ -6,18 +6,12 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/admin-auth';
 
 // Simple token check — we'll tighten this with full auth later
-function isAuthorized(request) {
-  const token = request.headers.get('authorization');
-  return token === `Bearer ${process.env.ADMIN_SECRET}`;
-}
-
 // GET all cars including unavailable ones (admin sees everything)
 export async function GET(request) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-  }
+  const _auth = await requireAdmin(request, 'cars_manage'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
 
   const result = await pool.query('SELECT * FROM cars ORDER BY created_at DESC');
   return NextResponse.json({ success: true, cars: result.rows });
@@ -25,9 +19,7 @@ export async function GET(request) {
 
 // POST — add a new car
 export async function POST(request) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-  }
+  const _auth = await requireAdmin(request, 'cars_manage'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
 
   try {
     const body = await request.json();

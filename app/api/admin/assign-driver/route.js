@@ -2,10 +2,9 @@
 // Assigns (or clears, if driver_id null) a driver to a trip or charter booking.
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
-function isAuthorized(req){ return req.headers.get('authorization') === `Bearer ${process.env.ADMIN_SECRET}`; }
-
+import { requireAdmin } from '@/lib/admin-auth';
 export async function POST(request) {
-  if (!isAuthorized(request)) return NextResponse.json({ success:false, error:'Unauthorized' }, { status:401 });
+  const _auth = await requireAdmin(request, 'drivers_assign'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
   try {
     const { kind, id, driver_id } = await request.json();
     const drv = driver_id || null;

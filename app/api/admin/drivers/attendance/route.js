@@ -2,10 +2,9 @@
 // If driver_id omitted, returns recent attendance across all drivers (with driver name)
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
-function isAuthorized(req){ return req.headers.get('authorization') === `Bearer ${process.env.ADMIN_SECRET}`; }
-
+import { requireAdmin } from '@/lib/admin-auth';
 export async function GET(request) {
-  if (!isAuthorized(request)) return NextResponse.json({ success:false, error:'Unauthorized' }, { status:401 });
+  const _auth = await requireAdmin(request, 'attendance_view'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
   try {
     const { searchParams } = new URL(request.url);
     const driverId = searchParams.get('driver_id');

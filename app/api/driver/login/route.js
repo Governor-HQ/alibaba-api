@@ -17,13 +17,23 @@ export async function POST(request) {
       return NextResponse.json({ success:false, error:'Invalid username or password.' }, { status:401 });
     }
     const driver = r.rows[0];
-    if (!driver.active) {
-      return NextResponse.json({ success:false, error:'This driver account is disabled.' }, { status:403 });
-    }
     const ok = await bcrypt.compare(password, driver.password_hash);
     if (!ok) {
       return NextResponse.json({ success:false, error:'Invalid username or password.' }, { status:401 });
     }
+
+    // Lifecycle gate (checked AFTER the password so we don't reveal account state to wrong guesses).
+    const status = driver.status || 'approved';
+    if (status === 'pending') {
+      return NextResponse.json({ success:false, error:'Your account is awaiting admin approval. Please try again once it has been approved.' }, { status:403 });
+    }
+    if (status === 'suspended') {
+      return NextResponse.json({ success:false, error:'Your account has been suspended. Please contact the admin.' }, { status:403 });
+    }
+    if (status !== 'approved' || driver.active === false) {
+      return NextResponse.json({ success:false, error:'This driver account is not active.' }, { status:403 });
+    }
+
     // Driver token carries role:'driver' to distinguish from customer tokens
     const token = jwt.sign({ driverId: driver.id, username: driver.username, role: 'driver' }, JWT_SECRET, { expiresIn: '7d' });
     return NextResponse.json({

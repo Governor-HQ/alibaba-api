@@ -1,9 +1,8 @@
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
-function isAuthorized(req){ return req.headers.get('authorization') === `Bearer ${process.env.ADMIN_SECRET}`; }
-
+import { requireAdmin } from '@/lib/admin-auth';
 export async function GET(request) {
-  if (!isAuthorized(request)) return NextResponse.json({ success:false, error:'Unauthorized' }, { status:401 });
+  const _auth = await requireAdmin(request, 'charter_pricing'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
   try {
     const r = await pool.query('SELECT * FROM charter_vehicle_types ORDER BY sort_order ASC, capacity ASC');
     return NextResponse.json({ success:true, vehicle_types:r.rows });
@@ -11,7 +10,7 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
-  if (!isAuthorized(request)) return NextResponse.json({ success:false, error:'Unauthorized' }, { status:401 });
+  const _auth = await requireAdmin(request, 'charter_pricing'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
   try {
     const { name, capacity, guide_text } = await request.json();
     if (!name || !capacity) return NextResponse.json({ success:false, error:'Name and capacity required.' }, { status:400 });

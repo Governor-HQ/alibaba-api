@@ -1,10 +1,9 @@
 // PATCH /api/admin/charter/bookings/5  { status:'cancelled', cancellation_reason }
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
-function isAuthorized(req){ return req.headers.get('authorization') === `Bearer ${process.env.ADMIN_SECRET}`; }
-
+import { requireAdmin } from '@/lib/admin-auth';
 export async function PATCH(request, { params }) {
-  if (!isAuthorized(request)) return NextResponse.json({ success:false, error:'Unauthorized' }, { status:401 });
+  const _auth = await requireAdmin(request, 'bookings_charter'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
   try {
     const { id } = await params;
     const { status, cancellation_reason } = await request.json();

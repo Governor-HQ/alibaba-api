@@ -5,6 +5,7 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/admin-auth';
 
 export async function POST(request) {
   try {
@@ -105,15 +106,7 @@ export async function POST(request) {
 
 export async function GET(request) {
   // Only admins can see the full bookings list
-  const authHeader = request.headers.get('authorization');
-  const token = authHeader ? authHeader.replace('Bearer ', '') : null;
-
-  if (token !== process.env.ADMIN_SECRET) {
-    return NextResponse.json(
-      { success: false, error: 'Unauthorized' },
-      { status: 401 }
-    );
-  }
+  const _auth = await requireAdmin(request, 'bookings_car'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
 
   try {
     const result = await pool.query(
