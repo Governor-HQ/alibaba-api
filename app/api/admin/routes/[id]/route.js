@@ -4,7 +4,7 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/admin-auth';
+import { requireAdmin, logAdminAction } from '@/lib/admin-auth';
 
 export async function PATCH(request, { params }) {
   const _auth = await requireAdmin(request, 'routes_manage'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
@@ -30,6 +30,7 @@ export async function PATCH(request, { params }) {
       return NextResponse.json({ success: false, error: 'Route not found' }, { status: 404 });
     }
 
+    await logAdminAction(_auth.admin, 'route_updated', `Route #${id} (${result.rows[0].origin} → ${result.rows[0].destination}) updated`);
     return NextResponse.json({ success: true, route: result.rows[0] });
   } catch (error) {
     return NextResponse.json({ success: false, error: 'Failed to update route' }, { status: 500 });
@@ -42,6 +43,7 @@ export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
     await pool.query('DELETE FROM routes WHERE id = $1', [id]);
+    await logAdminAction(_auth.admin, 'route_deleted', `Route #${id} deleted`);
     return NextResponse.json({ success: true, message: 'Route deleted' });
   } catch (error) {
     // If trips reference this route, deletion will fail — that's intentional protection

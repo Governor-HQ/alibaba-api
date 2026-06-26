@@ -4,7 +4,7 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/admin-auth';
+import { requireAdmin, logAdminAction } from '@/lib/admin-auth';
 
 export async function GET(request) {
   const _auth = await requireAdmin(request, 'buses_manage'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
@@ -22,18 +22,21 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { name, plate_number, total_seats, bus_type } = body;
+    const { name, plate_number, total_seats, bus_type, seat_map_enabled } = body;
 
     if (!name || !total_seats) {
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 });
     }
 
+    const mapOn = seat_map_enabled === false ? false : true; // default ON
+
     const result = await pool.query(
-      `INSERT INTO buses (name, plate_number, total_seats, bus_type, active)
-       VALUES ($1, $2, $3, $4, true) RETURNING *`,
-      [name, plate_number || null, total_seats, bus_type || 'standard']
+      `INSERT INTO buses (name, plate_number, total_seats, bus_type, active, seat_map_enabled)
+       VALUES ($1, $2, $3, $4, true, $5) RETURNING *`,
+      [name, plate_number || null, total_seats, bus_type || 'standard', mapOn]
     );
 
+    await logAdminAction(_auth.admin, 'bus_created', `Bus "${name}" (${total_seats} seats, seat map ${mapOn ? 'on' : 'off'})`);
     return NextResponse.json({ success: true, bus: result.rows[0] }, { status: 201 });
   } catch (error) {
     console.error('Error creating bus:', error);

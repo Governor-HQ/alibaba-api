@@ -1,7 +1,10 @@
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { rateLimit, clientIp } from '@/lib/rate-limit';
+import { requireAdmin } from '@/lib/admin-auth';
 
 export async function POST(request) {
+  const _rl = await rateLimit(`booking:${clientIp(request)}`, 20, 3600); if (!_rl.ok) return NextResponse.json({ success:false, error:'Too many attempts. Please wait a few minutes and try again.' }, { status:429 });
   try {
     const body = await request.json();
     const {
@@ -17,6 +20,15 @@ export async function POST(request) {
 
     if (!car_id || !customer_name || !customer_email || !customer_phone || !pickup_date || !return_date || !pickup_location) {
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 });
+    }
+
+    // Basic input validation / abuse limits (open endpoint).
+    const str = (v) => (typeof v === 'string' ? v.trim() : '');
+    if (!/^\S+@\S+\.\S+$/.test(str(customer_email)) ||
+        str(customer_name).length > 120 || str(customer_email).length > 160 ||
+        str(customer_phone).length > 40 || str(pickup_location).length > 200 ||
+        (notes && String(notes).length > 1000)) {
+      return NextResponse.json({ success: false, error: 'Invalid input.' }, { status: 400 });
     }
 
     // Get the car's price per day so we can calculate total_price ourselves
@@ -50,10 +62,8 @@ export async function POST(request) {
 
 export async function GET(request) {
   try {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader || authHeader !== `Bearer ${process.env.ADMIN_SECRET}`) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
+    const _auth = await requireAdmin(request, 'bookings_car');
+    if (!_auth.ok) return NextResponse.json({ success: false, error: _auth.error }, { status: _auth.status });
 
     const result = await pool.query(
       `SELECT b.*, c.name as car_name, c.model FROM bookings b

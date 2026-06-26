@@ -13,7 +13,7 @@ export async function GET(request, { params }) {
 
     // Get the trip + bus info (we need total_seats to build the full map)
     const tripResult = await pool.query(
-      `SELECT t.id, b.total_seats, b.bus_type, b.name as bus_name,
+      `SELECT t.id, b.total_seats, b.bus_type, b.seat_map_enabled, b.name as bus_name,
               r.origin, r.destination, r.price, t.departure_date, t.departure_time
        FROM trips t
        JOIN buses b ON t.bus_id = b.id
@@ -60,6 +60,7 @@ export async function GET(request, { params }) {
         departure_time: trip.departure_time,
         bus_name: trip.bus_name,
         bus_type: trip.bus_type,
+        seat_map_enabled: trip.seat_map_enabled,
         total_seats: trip.total_seats
       },
       seats: seatMap

@@ -12,6 +12,7 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { makeRef } from '@/lib/ref';
 import jwt from 'jsonwebtoken';
 const JWT_SECRET = process.env.JWT_SECRET || 'alibaba_jwt_secret_change_this';
 function getUserFromToken(req) {
@@ -36,16 +37,16 @@ export async function POST(request) {
       customer_phone
     } = body;
 
-    if (!trip_id || !seat_number || !customer_name || !customer_email || !customer_phone) {
+    if (!trip_id || !customer_name || !customer_email || !customer_phone) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields' },
         { status: 400 }
       );
     }
 
-    // Get the trip + route price + bus seat count, to validate everything
+    // Get the trip + route price + bus seat count + seat-map flag
     const tripResult = await pool.query(
-      `SELECT t.id, t.status, b.total_seats, r.price
+      `SELECT t.id, t.status, b.total_seats, b.seat_map_enabled, r.price
        FROM trips t
        JOIN buses b ON t.bus_id = b.id
        JOIN routes r ON t.route_id = r.id
@@ -69,30 +70,59 @@ export async function POST(request) {
       );
     }
 
-    if (seat_number < 1 || seat_number > trip.total_seats) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid seat number for this bus' },
-        { status: 400 }
-      );
-    }
-
-    // SEAT-LOCK CHECK — make sure nobody else has this seat already
-    // (pending OR confirmed bookings both count as "taken")
-    const existingSeat = await pool.query(
-      `SELECT id FROM seat_bookings 
-       WHERE trip_id = $1 AND seat_number = $2 AND status != 'cancelled'`,
-      [trip_id, seat_number]
+    // Which seats are already taken (pending or confirmed both count)
+    const takenRes = await pool.query(
+      `SELECT seat_number FROM seat_bookings
+       WHERE trip_id = $1 AND status != 'cancelled'`,
+      [trip_id]
     );
+    const taken = new Set(takenRes.rows.map(r => r.seat_number));
 
-    if (existingSeat.rows.length > 0) {
-      return NextResponse.json(
-        { success: false, error: 'This seat has just been taken. Please choose another seat.' },
-        { status: 409 }
-      );
+    // Open-seating buses (seat_map_enabled = false) — or any request that
+    // doesn't pick a seat — get the lowest free seat auto-assigned.
+    const fcfs = trip.seat_map_enabled === false || seat_number == null;
+    let finalSeat;
+    if (fcfs) {
+      finalSeat = null;
+      for (let n = 1; n <= trip.total_seats; n++) {
+        if (!taken.has(n)) { finalSeat = n; break; }
+      }
+      if (finalSeat === null) {
+        return NextResponse.json(
+          { success: false, error: 'This trip is fully booked.' },
+          { status: 409 }
+        );
+      }
+    } else {
+      if (seat_number < 1 || seat_number > trip.total_seats) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid seat number for this bus' },
+          { status: 400 }
+        );
+      }
+      if (taken.has(seat_number)) {
+        return NextResponse.json(
+          { success: false, error: 'This seat has just been taken. Please choose another seat.' },
+          { status: 409 }
+        );
+      }
+      finalSeat = seat_number;
     }
 
     const total_price = parseFloat(trip.price);
-    const paymentReference = `ALB-BUS-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    const paymentReference = makeRef('ALB-BUS-');
+    const isTransfer = (body.payment_method === 'transfer');
+
+    // A previously-cancelled reservation still occupies this exact (trip, seat)
+    // slot under the UNIQUE(trip_id, seat_number) constraint. That makes the seat
+    // look free on the map (cancelled rows are excluded from "taken") but blocks
+    // re-booking with a duplicate-key error. Clear any cancelled reservation for
+    // this seat so it can be booked again. Active bookings were already rejected
+    // by the checks above, so only cancelled rows can match here.
+    await pool.query(
+      `DELETE FROM seat_bookings WHERE trip_id = $1 AND seat_number = $2 AND status = 'cancelled'`,
+      [trip_id, finalSeat]
+    );
 
     // Create the seat booking as pending + unpaid.
     // The UNIQUE(trip_id, seat_number) constraint in the database is our
@@ -103,9 +133,9 @@ export async function POST(request) {
       bookingResult = await pool.query(
         `INSERT INTO seat_bookings 
           (trip_id, seat_number, customer_name, customer_email, customer_phone, total_price, payment_reference, payment_status, user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'unpaid', $8)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $9, $8)
          RETURNING *`,
-        [trip_id, seat_number, customer_name, customer_email, customer_phone, total_price, paymentReference, getUserFromToken(request)?.userId || null]
+        [trip_id, finalSeat, customer_name, customer_email, customer_phone, total_price, paymentReference, getUserFromToken(request)?.userId || null, isTransfer ? 'awaiting_transfer' : 'unpaid']
       );
     } catch (dbError) {
       // 23505 = unique constraint violation — someone else just took this seat
@@ -119,6 +149,10 @@ export async function POST(request) {
     }
 
     const booking = bookingResult.rows[0];
+
+    if (isTransfer) {
+      return NextResponse.json({ success: true, booking, reference: paymentReference, amount: total_price, payment_method: 'transfer' }, { status: 201 });
+    }
 
     // Start the Paystack transaction
     const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', {
