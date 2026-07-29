@@ -43,7 +43,12 @@ export async function POST(request) {
        VALUES ($1,$2,$3,$4,$5,'pending')`,
       [booking_type, reference, bk.rows[0].amount, String(sender_name).trim().slice(0, 120), path]
     );
-    await pool.query(`UPDATE ${table} SET payment_status='processing' WHERE payment_reference=$1`, [reference]);
+    // Receipt uploaded → this seat must never auto-expire; it now waits for an
+    // admin decision. Clearing hold_expires_at (NULL) takes it out of lazy
+    // expiry. Only seat_bookings has this column (bus is the only in-scope
+    // service); other tables don't, so only touch it for bus.
+    const holdClear = table === 'seat_bookings' ? ', hold_expires_at=NULL' : '';
+    await pool.query(`UPDATE ${table} SET payment_status='processing'${holdClear} WHERE payment_reference=$1`, [reference]);
 
     return NextResponse.json({ success:true });
   } catch (e) {

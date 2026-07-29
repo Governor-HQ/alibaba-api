@@ -26,8 +26,9 @@ export async function GET(request) {
         t.id, t.departure_date, t.departure_time, t.status,
         b.id as bus_id, b.name as bus_name, b.bus_type, b.total_seats, b.seat_map_enabled,
         r.origin, r.destination, r.price, r.duration_hours,
-        (SELECT COUNT(*) FROM seat_bookings sb 
-         WHERE sb.trip_id = t.id AND sb.status != 'cancelled') as seats_taken
+        (SELECT COUNT(*) FROM seat_bookings sb
+         WHERE sb.trip_id = t.id AND sb.status != 'cancelled'
+           AND (sb.hold_expires_at IS NULL OR sb.hold_expires_at > NOW())) as seats_taken
        FROM trips t
        JOIN buses b ON t.bus_id = b.id
        JOIN routes r ON t.route_id = r.id

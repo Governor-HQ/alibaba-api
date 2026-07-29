@@ -50,7 +50,10 @@ export async function POST(request, { params }) {
     if (!table) return NextResponse.json({ success:false, error:'Invalid booking type.' }, { status:400 });
 
     if (action === 'confirm') {
-      await pool.query(`UPDATE ${table} SET payment_status='paid', status='confirmed' WHERE payment_reference=$1`, [row.reference]);
+      // Genuinely paid → clear the hold so a paid seat can never auto-expire.
+      // Only seat_bookings has hold_expires_at (bus is the only in-scope service).
+      const holdClear = table === 'seat_bookings' ? ', hold_expires_at=NULL' : '';
+      await pool.query(`UPDATE ${table} SET payment_status='paid', status='confirmed'${holdClear} WHERE payment_reference=$1`, [row.reference]);
       await pool.query(`UPDATE manual_payments SET status='confirmed', confirmed_by=$1, confirmed_at=NOW() WHERE id=$2`, [a.admin.username, id]);
       await logAdminAction(a.admin, 'confirm_payment', `Confirmed transfer ${row.reference} (₦${row.amount})`);
       return NextResponse.json({ success:true });

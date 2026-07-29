@@ -3,15 +3,16 @@ import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { requireAdmin, logAdminAction } from '@/lib/admin-auth';
 
-const KEYS = ['business_whatsapp', 'bank_name', 'bank_account_number', 'bank_account_name', 'payments_online_enabled', 'payments_transfer_enabled'];
+const KEYS = ['business_whatsapp', 'bank_name', 'bank_account_number', 'bank_account_name', 'payments_online_enabled', 'payments_transfer_enabled', 'seat_hold_online_minutes', 'seat_hold_transfer_minutes'];
 const DEFAULT_ON = ['payments_online_enabled', 'payments_transfer_enabled'];
+const DEFAULTS = { seat_hold_online_minutes: '15', seat_hold_transfer_minutes: '180' };
 
 export async function GET(request) {
   const a = await requireAdmin(request);
   if (!a.ok) return NextResponse.json({ success:false, error:a.error }, { status:a.status });
   const r = await pool.query('SELECT key, value FROM app_settings WHERE key = ANY($1)', [KEYS]);
   const out = {};
-  for (const k of KEYS) out[k] = DEFAULT_ON.includes(k) ? 'on' : '';
+  for (const k of KEYS) out[k] = DEFAULT_ON.includes(k) ? 'on' : (DEFAULTS[k] ?? '');
   for (const row of r.rows) out[row.key] = row.value || '';
   return NextResponse.json({ success:true, ...out });
 }
@@ -28,6 +29,10 @@ export async function POST(request) {
     if ('bank_account_name' in body)     updates.push(['bank_account_name', String(body.bank_account_name || '').trim().slice(0, 120)]);
     if ('payments_online_enabled' in body)   updates.push(['payments_online_enabled', body.payments_online_enabled === 'on' || body.payments_online_enabled === true ? 'on' : 'off']);
     if ('payments_transfer_enabled' in body) updates.push(['payments_transfer_enabled', body.payments_transfer_enabled === 'on' || body.payments_transfer_enabled === true ? 'on' : 'off']);
+    // Seat-hold windows (minutes). Clamp to sane bounds; fall back to the seeded
+    // default if the value isn't a usable positive number.
+    if ('seat_hold_online_minutes' in body)   updates.push(['seat_hold_online_minutes', String(Math.max(1, Math.min(1440, parseInt(body.seat_hold_online_minutes, 10) || 15)))]);
+    if ('seat_hold_transfer_minutes' in body) updates.push(['seat_hold_transfer_minutes', String(Math.max(1, Math.min(10080, parseInt(body.seat_hold_transfer_minutes, 10) || 180)))]);
     for (const [k, v] of updates) {
       await pool.query(
         "INSERT INTO app_settings (key,value,updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=NOW()",
@@ -37,7 +42,7 @@ export async function POST(request) {
     await logAdminAction(a.admin, 'update_settings', 'Updated business / bank settings');
     const r = await pool.query('SELECT key, value FROM app_settings WHERE key = ANY($1)', [KEYS]);
     const out = {};
-    for (const k of KEYS) out[k] = DEFAULT_ON.includes(k) ? 'on' : '';
+    for (const k of KEYS) out[k] = DEFAULT_ON.includes(k) ? 'on' : (DEFAULTS[k] ?? '');
     for (const row of r.rows) out[row.key] = row.value || '';
     return NextResponse.json({ success:true, ...out });
   } catch (e) {

@@ -32,8 +32,9 @@ export async function POST(request) {
           [reference]
         );
       } else if (reference.startsWith('ALB-BUS-')) {
+        // Genuinely paid → clear the hold so a paid seat can never auto-expire.
         await pool.query(
-          `UPDATE seat_bookings SET payment_status = 'paid', status = 'confirmed' WHERE payment_reference = $1`,
+          `UPDATE seat_bookings SET payment_status = 'paid', status = 'confirmed', hold_expires_at = NULL WHERE payment_reference = $1`,
           [reference]
         );
       } else {

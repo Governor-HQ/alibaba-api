@@ -31,10 +31,15 @@ export async function GET(request, { params }) {
 
     const trip = tripResult.rows[0];
 
-    // Get all seats already booked (not cancelled) for this trip
+    // Get all seats already booked (not cancelled) for this trip. A seat is
+    // treated as FREE if it's cancelled OR its hold has expired — an abandoned,
+    // unpaid hold whose hold_expires_at is now in the past no longer counts as
+    // taken. Pure lazy filtering at query time; nothing frees seats in the
+    // background.
     const bookedResult = await pool.query(
-      `SELECT seat_number FROM seat_bookings 
-       WHERE trip_id = $1 AND status != 'cancelled'`,
+      `SELECT seat_number FROM seat_bookings
+       WHERE trip_id = $1 AND status != 'cancelled'
+         AND (hold_expires_at IS NULL OR hold_expires_at > NOW())`,
       [id]
     );
 

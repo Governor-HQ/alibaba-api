@@ -70,10 +70,14 @@ export async function POST(request) {
       );
     }
 
-    // Which seats are already taken (pending or confirmed both count)
+    // Which seats are already taken (pending or confirmed both count).
+    // A seat is FREE if it's cancelled OR its hold has expired — an abandoned
+    // pending hold whose hold_expires_at is now in the past no longer blocks the
+    // seat. Pure lazy filtering here at query time; no background job frees them.
     const takenRes = await pool.query(
       `SELECT seat_number FROM seat_bookings
-       WHERE trip_id = $1 AND status != 'cancelled'`,
+       WHERE trip_id = $1 AND status != 'cancelled'
+         AND (hold_expires_at IS NULL OR hold_expires_at > NOW())`,
       [trip_id]
     );
     const taken = new Set(takenRes.rows.map(r => r.seat_number));
@@ -113,14 +117,37 @@ export async function POST(request) {
     const paymentReference = makeRef('ALB-BUS-');
     const isTransfer = (body.payment_method === 'transfer');
 
-    // A previously-cancelled reservation still occupies this exact (trip, seat)
-    // slot under the UNIQUE(trip_id, seat_number) constraint. That makes the seat
-    // look free on the map (cancelled rows are excluded from "taken") but blocks
-    // re-booking with a duplicate-key error. Clear any cancelled reservation for
-    // this seat so it can be booked again. Active bookings were already rejected
-    // by the checks above, so only cancelled rows can match here.
+    // How long this new hold lives before it auto-expires. Admin-configurable in
+    // app_settings; fall back to the seeded defaults if either row is missing.
+    // Online (Paystack) checkouts get a short window; transfers get longer so the
+    // customer can send money and upload a receipt.
+    const holdSettings = await pool.query(
+      `SELECT key, value FROM app_settings
+       WHERE key = ANY($1)`,
+      [['seat_hold_online_minutes', 'seat_hold_transfer_minutes']]
+    );
+    let onlineMinutes = 15, transferMinutes = 180;
+    for (const row of holdSettings.rows) {
+      const n = parseInt(row.value, 10);
+      if (Number.isFinite(n) && n > 0) {
+        if (row.key === 'seat_hold_online_minutes') onlineMinutes = n;
+        if (row.key === 'seat_hold_transfer_minutes') transferMinutes = n;
+      }
+    }
+    const holdMinutes = isTransfer ? transferMinutes : onlineMinutes;
+
+    // A cancelled OR expired reservation still occupies this exact (trip, seat)
+    // slot under the UNIQUE(trip_id, seat_number) constraint. Both make the seat
+    // look free on the map (cancelled rows and lapsed holds are excluded from
+    // "taken") but a leftover row blocks re-booking with a duplicate-key error.
+    // Clear any such stale reservation for this seat so it can be booked again.
+    // Active, unexpired bookings were already rejected by the checks above, so
+    // only cancelled or expired rows can match here.
     await pool.query(
-      `DELETE FROM seat_bookings WHERE trip_id = $1 AND seat_number = $2 AND status = 'cancelled'`,
+      `DELETE FROM seat_bookings
+       WHERE trip_id = $1 AND seat_number = $2
+         AND (status = 'cancelled'
+              OR (hold_expires_at IS NOT NULL AND hold_expires_at < NOW()))`,
       [trip_id, finalSeat]
     );
 
@@ -131,11 +158,11 @@ export async function POST(request) {
     let bookingResult;
     try {
       bookingResult = await pool.query(
-        `INSERT INTO seat_bookings 
-          (trip_id, seat_number, customer_name, customer_email, customer_phone, total_price, payment_reference, payment_status, user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $9, $8)
+        `INSERT INTO seat_bookings
+          (trip_id, seat_number, customer_name, customer_email, customer_phone, total_price, payment_reference, payment_status, user_id, hold_expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $9, $8, NOW() + ($10 * INTERVAL '1 minute'))
          RETURNING *`,
-        [trip_id, finalSeat, customer_name, customer_email, customer_phone, total_price, paymentReference, getUserFromToken(request)?.userId || null, isTransfer ? 'awaiting_transfer' : 'unpaid']
+        [trip_id, finalSeat, customer_name, customer_email, customer_phone, total_price, paymentReference, getUserFromToken(request)?.userId || null, isTransfer ? 'awaiting_transfer' : 'unpaid', holdMinutes]
       );
     } catch (dbError) {
       // 23505 = unique constraint violation — someone else just took this seat
