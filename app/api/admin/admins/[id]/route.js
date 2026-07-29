@@ -9,8 +9,9 @@ export async function PATCH(request, { params }) {
   if (!a.ok) return NextResponse.json({ success:false, error:a.error }, { status:a.status });
   try {
     const { id } = await params;
-    const target = await pool.query('SELECT id, role FROM admins WHERE id = $1', [id]);
+    const target = await pool.query('SELECT id, role, deleted_at FROM admins WHERE id = $1', [id]);
     if (!target.rows.length) return NextResponse.json({ success:false, error:'Not found.' }, { status:404 });
+    if (target.rows[0].deleted_at) return NextResponse.json({ success:false, error:'This admin has been deleted.' }, { status:404 });
     if (target.rows[0].role === 'super_admin') return NextResponse.json({ success:false, error:'The super admin account cannot be modified here.' }, { status:403 });
 
     const { permissions, active, password } = await request.json();
@@ -36,11 +37,14 @@ export async function DELETE(request, { params }) {
   if (!a.ok) return NextResponse.json({ success:false, error:a.error }, { status:a.status });
   try {
     const { id } = await params;
-    const target = await pool.query('SELECT role, username FROM admins WHERE id = $1', [id]);
+    const target = await pool.query('SELECT role, username, deleted_at FROM admins WHERE id = $1', [id]);
     if (!target.rows.length) return NextResponse.json({ success:false, error:'Not found.' }, { status:404 });
     if (target.rows[0].role === 'super_admin') return NextResponse.json({ success:false, error:'The super admin cannot be deleted.' }, { status:403 });
-    await pool.query('DELETE FROM admins WHERE id = $1', [id]);
-    await logAdminAction(a.admin, 'delete_admin', `Deleted admin '${target.rows[0].username}'`);
+    if (target.rows[0].deleted_at) return NextResponse.json({ success:false, error:'This admin is already deleted.' }, { status:409 });
+    // Soft delete — keep the row forever for backtracking; the admin can no longer
+    // log in (see login route + requireAdmin, both block deleted_at).
+    await pool.query('UPDATE admins SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL', [id]);
+    await logAdminAction(a.admin, 'delete_admin', `Soft-deleted admin '${target.rows[0].username}' (#${id})`);
     return NextResponse.json({ success:true });
   } catch (e) {
     console.error('delete admin', e);

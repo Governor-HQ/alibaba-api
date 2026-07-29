@@ -7,7 +7,18 @@ import { requireAdmin, logAdminAction } from '@/lib/admin-auth';
 export async function GET(request) {
   const a = await requireAdmin(request, 'admins_manage');
   if (!a.ok) return NextResponse.json({ success:false, error:a.error }, { status:a.status });
-  const r = await pool.query('SELECT id, username, role, permissions, active, created_at FROM admins ORDER BY (role=\'super_admin\') DESC, created_at ASC');
+  // ?deleted=1 → the read-only history of soft-deleted admins. Default (no param)
+  // returns the live roster (active + suspended), exactly as before.
+  const wantDeleted = new URL(request.url).searchParams.get('deleted') === '1';
+  if (wantDeleted) {
+    const r = await pool.query(
+      'SELECT id, admin_number, username, role, permissions, active, created_at, deleted_at FROM admins WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC'
+    );
+    return NextResponse.json({ success:true, admins:r.rows });
+  }
+  const r = await pool.query(
+    'SELECT id, admin_number, username, role, permissions, active, created_at FROM admins WHERE deleted_at IS NULL ORDER BY (role=\'super_admin\') DESC, created_at ASC'
+  );
   return NextResponse.json({ success:true, admins:r.rows });
 }
 
@@ -23,8 +34,10 @@ export async function POST(request) {
     if (exists.rows.length) return NextResponse.json({ success:false, error:'Username already taken.' }, { status:409 });
     const perms = Array.isArray(permissions) ? permissions : [];
     const hash = await bcrypt.hash(password, 10);
+    // admin_number is assigned automatically by the trg_assign_admin_number
+    // trigger (next value from admin_number_seq); we just return it.
     const r = await pool.query(
-      'INSERT INTO admins (username, password_hash, role, permissions, active, created_by) VALUES ($1,$2,$3,$4::jsonb,true,$5) RETURNING id, username, role, permissions, active',
+      'INSERT INTO admins (username, password_hash, role, permissions, active, created_by) VALUES ($1,$2,$3,$4::jsonb,true,$5) RETURNING id, admin_number, username, role, permissions, active',
       [uname, hash, 'admin', JSON.stringify(perms), a.admin.adminId]
     );
     await logAdminAction(a.admin, 'create_admin', `Created admin '${uname}'`);

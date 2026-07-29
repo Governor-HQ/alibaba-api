@@ -15,6 +15,10 @@ export async function POST(request) {
     const r = await pool.query('SELECT * FROM admins WHERE username = $1', [username.toLowerCase().trim()]);
     if (!r.rows.length) return NextResponse.json({ success:false, error:'Invalid username or password.' }, { status:401 });
     const a = r.rows[0];
+    // Soft-deleted admins can never log in. Return the generic invalid-credentials
+    // message (not a distinct "deleted" one) so a deleted account is indistinguishable
+    // from a non-existent one.
+    if (a.deleted_at) return NextResponse.json({ success:false, error:'Invalid username or password.' }, { status:401 });
     const ok = await bcrypt.compare(password, a.password_hash);
     if (!ok) return NextResponse.json({ success:false, error:'Invalid username or password.' }, { status:401 });
     if (a.active === false) return NextResponse.json({ success:false, error:'Your admin account has been suspended.' }, { status:403 });
