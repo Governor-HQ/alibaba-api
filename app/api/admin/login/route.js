@@ -1,12 +1,14 @@
 // POST /api/admin/login { username, password } → admin JWT
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { rateLimit, clientIp } from '@/lib/rate-limit';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { logAdminAction } from '@/lib/admin-auth';
 const JWT_SECRET = process.env.JWT_SECRET || 'alibaba_jwt_secret_change_this';
 
 export async function POST(request) {
+  const _rl = await rateLimit(`adminlogin:${clientIp(request)}`, 10, 300); if (!_rl.ok) return NextResponse.json({ success:false, error:'Too many attempts. Please wait a few minutes and try again.' }, { status:429 });
   try {
     const { username, password } = await request.json();
     if (!username || !password) return NextResponse.json({ success:false, error:'Username and password required.' }, { status:400 });

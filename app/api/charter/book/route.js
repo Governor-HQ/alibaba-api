@@ -2,6 +2,7 @@
 // Price is recomputed server-side; the client cannot set the price.
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { makeRef } from '@/lib/ref';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'alibaba_jwt_secret_change_this';
@@ -61,7 +62,8 @@ export async function POST(request) {
       return NextResponse.json({ success: false, error: 'Invalid selection.' }, { status: 404 });
     }
 
-    const reference = `ALB-CHT-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    const reference = makeRef('ALB-CHT-');
+    const isTransfer = (b.payment_method === 'transfer');
 
     const ins = await pool.query(
       `INSERT INTO charter_bookings
@@ -69,7 +71,7 @@ export async function POST(request) {
          quantity, trip_type, unit_price, total_price,
          event_date, pickup_location, destination, trip_purpose, guest_count, notes,
          contact_name, contact_email, contact_phone, status, payment_reference, payment_status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'pending',$20,'unpaid')
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'pending',$20,$21)
        RETURNING *`,
       [
         user.userId, reference, vehicle_type_id, vt.rows[0].name, zone_id, zn.rows[0].name,
@@ -77,9 +79,13 @@ export async function POST(request) {
         event_date, pickup_location.trim(), destination.trim(),
         trip_purpose?.trim() || null, guest_count || null, notes?.trim() || null,
         contact_name.trim(), contact_email.toLowerCase().trim(), contact_phone.trim(),
-        reference
+        reference, isTransfer ? 'awaiting_transfer' : 'unpaid'
       ]
     );
+
+    if (isTransfer) {
+      return NextResponse.json({ success: true, booking: ins.rows[0], reference, amount: totalPrice, payment_method: 'transfer' }, { status: 201 });
+    }
 
     // Start Paystack
     const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', {

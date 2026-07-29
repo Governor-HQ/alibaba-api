@@ -1,5 +1,23 @@
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import jwt from 'jsonwebtoken';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'alibaba_jwt_secret_change_this';
+
+// If a booking belongs to a registered user, and the caller is a logged-in
+// user who is NOT that owner, deny — even if they somehow have the reference.
+// Guests (no token) are allowed through on the strength of the unguessable ref.
+function tokenUserId(request) {
+  const h = request.headers.get('authorization');
+  if (!h || !h.startsWith('Bearer ')) return null;
+  try { return jwt.verify(h.replace('Bearer ', ''), JWT_SECRET).userId ?? null; }
+  catch { return null; }
+}
+function ownershipDenied(booking, request) {
+  if (!booking || booking.user_id == null) return false;
+  const uid = tokenUserId(request);
+  return uid != null && String(uid) !== String(booking.user_id);
+}
 
 export async function GET(request) {
   try {
@@ -50,6 +68,7 @@ export async function GET(request) {
       if (chRes.rows.length === 0) {
         return NextResponse.json({ success: false, error: 'Charter not found' }, { status: 404 });
       }
+      if (ownershipDenied(chRes.rows[0], request)) return NextResponse.json({ success:false, error:'Not authorized for this booking.' }, { status:403 });
       return NextResponse.json({ success: true, booking_type: 'charter', booking: chRes.rows[0] });
     }
 
@@ -68,6 +87,7 @@ export async function GET(request) {
         return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
       }
 
+      if (ownershipDenied(seatResult.rows[0], request)) return NextResponse.json({ success:false, error:'Not authorized for this booking.' }, { status:403 });
       return NextResponse.json({ success: true, booking_type: 'bus', booking: seatResult.rows[0] });
     }
 
@@ -82,6 +102,7 @@ export async function GET(request) {
       return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
     }
 
+    if (ownershipDenied(bookingResult.rows[0], request)) return NextResponse.json({ success:false, error:'Not authorized for this booking.' }, { status:403 });
     return NextResponse.json({ success: true, booking_type: 'car', booking: bookingResult.rows[0] });
 
   } catch (error) {

@@ -13,6 +13,7 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { rateLimit, clientIp } from '@/lib/rate-limit';
 
 const CODE_TTL_MINUTES = 30;
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O/1/I/L to avoid relay/typing confusion
@@ -29,6 +30,7 @@ const GENERIC = {
 };
 
 export async function POST(request) {
+  const _rl = await rateLimit(`forgot:${clientIp(request)}`, 6, 3600); if (!_rl.ok) return NextResponse.json({ success:false, error:'Too many attempts. Please wait a few minutes and try again.' }, { status:429 });
   try {
     const { email } = await request.json();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -37,9 +39,10 @@ export async function POST(request) {
 
     const found = await pool.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase().trim()]);
 
-    // Anti-enumeration: respond identically whether or not the account exists.
+    // Per product decision: tell the user plainly when no account exists for that
+    // email (rate limiting above mitigates enumeration abuse).
     if (found.rows.length === 0) {
-      return NextResponse.json(GENERIC);
+      return NextResponse.json({ success: false, error: 'No account exists for that email address. Please check it and try again.' }, { status: 404 });
     }
     const userId = found.rows[0].id;
 

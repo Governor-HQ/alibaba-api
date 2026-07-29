@@ -24,7 +24,7 @@ export async function GET(request) {
     const result = await pool.query(
       `SELECT 
         t.id, t.departure_date, t.departure_time, t.status,
-        b.id as bus_id, b.name as bus_name, b.bus_type, b.total_seats,
+        b.id as bus_id, b.name as bus_name, b.bus_type, b.total_seats, b.seat_map_enabled,
         r.origin, r.destination, r.price, r.duration_hours,
         (SELECT COUNT(*) FROM seat_bookings sb 
          WHERE sb.trip_id = t.id AND sb.status != 'cancelled') as seats_taken

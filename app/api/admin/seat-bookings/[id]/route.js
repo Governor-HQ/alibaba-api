@@ -4,7 +4,7 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/admin-auth';
+import { requireAdmin, logAdminAction, hasPerm } from '@/lib/admin-auth';
 
 export async function PATCH(request, { params }) {
   const _auth = await requireAdmin(request, 'bookings_bus'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
@@ -15,6 +15,17 @@ export async function PATCH(request, { params }) {
 
     if (!['confirmed', 'cancelled', 'pending'].includes(status)) {
       return NextResponse.json({ success: false, error: 'Invalid status' }, { status: 400 });
+    }
+
+    // Cancelling — or undoing a cancellation — is gated behind the bookings_cancel permission.
+    const _cur = await pool.query('SELECT status FROM seat_bookings WHERE id = $1', [id]);
+    if (_cur.rows.length === 0) {
+      return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
+    }
+    const _wasCancelled = _cur.rows[0].status === 'cancelled';
+    const _willCancel = status === 'cancelled';
+    if ((_wasCancelled || _willCancel) && !hasPerm(_auth.admin, 'bookings_cancel')) {
+      return NextResponse.json({ success: false, error: 'You do not have permission to cancel or undo bookings.' }, { status: 403 });
     }
 
     let result;
@@ -34,6 +45,9 @@ export async function PATCH(request, { params }) {
       return NextResponse.json({ success: false, error: 'Booking not found' }, { status: 404 });
     }
 
+    await logAdminAction(_auth.admin,
+      _willCancel ? 'bus_booking_cancelled' : (_wasCancelled ? 'bus_booking_restored' : 'bus_booking_' + status),
+      `Booking #${id}` + (_willCancel && cancellation_reason ? ` — reason: ${cancellation_reason}` : ''));
     return NextResponse.json({ success: true, booking: result.rows[0] });
   } catch (error) {
     console.error('Admin seat booking update error:', error);

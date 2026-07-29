@@ -5,12 +5,14 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { rateLimit, clientIp } from '@/lib/rate-limit';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'alibaba_jwt_secret_change_this';
 
 export async function POST(request) {
+  const _rl = await rateLimit(`register:${clientIp(request)}`, 6, 3600); if (!_rl.ok) return NextResponse.json({ success:false, error:'Too many attempts. Please wait a few minutes and try again.' }, { status:429 });
   try {
     const { first_name, last_name, email, phone, password } = await request.json();
 

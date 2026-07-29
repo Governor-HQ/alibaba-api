@@ -1,5 +1,6 @@
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { makeRef } from '@/lib/ref';
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'alibaba_jwt_secret_change_this';
@@ -7,10 +8,10 @@ const JWT_SECRET = process.env.JWT_SECRET || 'alibaba_jwt_secret_change_this';
 function getUserFromToken(request) {
   const authHeader = request.headers.get('authorization');
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
-  // Skip admin token
-  if (authHeader === `Bearer ${process.env.ADMIN_SECRET}`) return null;
   try {
-    return jwt.verify(authHeader.replace('Bearer ', ''), JWT_SECRET);
+    const decoded = jwt.verify(authHeader.replace('Bearer ', ''), JWT_SECRET);
+    // Only treat customer tokens (which carry userId) as the booking owner.
+    return decoded && decoded.userId ? decoded : null;
   } catch {
     return null;
   }
@@ -33,7 +34,8 @@ export async function POST(request) {
     const pricePerDay = parseFloat(carResult.rows[0].price_day);
     const days = Math.max(1, Math.ceil((new Date(return_date) - new Date(pickup_date)) / (1000 * 60 * 60 * 24)));
     const total_price = pricePerDay * days;
-    const paymentReference = `ALB-PAY-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    const paymentReference = makeRef('ALB-PAY-');
+    const isTransfer = (body.payment_method === 'transfer');
 
     // Attach user_id if logged in
     const userToken = getUserFromToken(request);
@@ -41,11 +43,15 @@ export async function POST(request) {
 
     const bookingResult = await pool.query(
       `INSERT INTO bookings (car_id, customer_name, customer_email, customer_phone, pickup_date, return_date, pickup_location, total_price, notes, payment_reference, payment_status, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'unpaid', $11) RETURNING *`,
-      [car_id, customer_name, customer_email, customer_phone, pickup_date, return_date, pickup_location, total_price, notes || null, paymentReference, user_id]
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $12, $11) RETURNING *`,
+      [car_id, customer_name, customer_email, customer_phone, pickup_date, return_date, pickup_location, total_price, notes || null, paymentReference, user_id, isTransfer ? 'awaiting_transfer' : 'unpaid']
     );
 
     const booking = bookingResult.rows[0];
+
+    if (isTransfer) {
+      return NextResponse.json({ success: true, booking, reference: paymentReference, amount: total_price, payment_method: 'transfer' }, { status: 201 });
+    }
 
     const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
