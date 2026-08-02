@@ -6,6 +6,7 @@ import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { uploadReceipt, storageConfigured } from '@/lib/storage';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
+import { expireStaleHolds } from '@/lib/seat-holds';
 
 const TABLES = { car: 'bookings', bus: 'seat_bookings', charter: 'charter_bookings' };
 
@@ -23,9 +24,18 @@ export async function POST(request) {
     const table = TABLES[booking_type];
     if (!table) return NextResponse.json({ success:false, error:'Invalid booking type.' }, { status:400 });
 
-    const bk = await pool.query(`SELECT id, total_price AS amount, payment_status FROM ${table} WHERE payment_reference = $1`, [reference]);
+    // For bus, reconcile lapsed holds FIRST so a booking whose countdown just
+    // expired is flipped to 'cancelled' before we accept a receipt against it.
+    if (booking_type === 'bus') await expireStaleHolds();
+
+    const bk = await pool.query(`SELECT id, total_price AS amount, payment_status, status FROM ${table} WHERE payment_reference = $1`, [reference]);
     if (!bk.rows.length) return NextResponse.json({ success:false, error:'Booking not found.' }, { status:404 });
     if (bk.rows[0].payment_status === 'paid') return NextResponse.json({ success:false, error:'This booking is already paid.' }, { status:409 });
+    // Never attach a receipt to a dead booking — e.g. a bus seat hold that expired
+    // and was auto-released, or a booking an admin cancelled.
+    if (bk.rows[0].status === 'cancelled') {
+      return NextResponse.json({ success:false, error:'This booking is no longer active — the seat hold expired and the seat was released. Please book a new seat.' }, { status:409 });
+    }
 
     // Decode + cap the image size (the client also compresses before sending).
     const b64 = String(receipt_base64).replace(/^data:[^;]+;base64,/, '');

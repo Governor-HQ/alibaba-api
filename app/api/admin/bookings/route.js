@@ -6,6 +6,7 @@
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin-auth';
+import { parsePaging, pageMeta } from '@/lib/paginate';
 
 export async function POST(request) {
   try {
@@ -109,16 +110,31 @@ export async function GET(request) {
   const _auth = await requireAdmin(request, 'bookings_car'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
 
   try {
+    const { page, limit, offset } = parsePaging(request);
+
+    // Stats across ALL bookings (not just the page) — keeps the summary cards true.
+    const stats = (await pool.query(
+      `SELECT COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE status='pending')::int   AS pending,
+              COUNT(*) FILTER (WHERE status='confirmed')::int AS confirmed,
+              COUNT(*) FILTER (WHERE status='cancelled')::int AS cancelled
+       FROM bookings`
+    )).rows[0];
+
     const result = await pool.query(
-      `SELECT b.*, c.name as car_name, c.model as car_model 
-       FROM bookings b 
-       JOIN cars c ON b.car_id = c.id 
-       ORDER BY b.created_at DESC`
+      `SELECT b.*, c.name as car_name, c.model as car_model
+       FROM bookings b
+       JOIN cars c ON b.car_id = c.id
+       ORDER BY b.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
 
     return NextResponse.json({
       success: true,
-      bookings: result.rows
+      bookings: result.rows,
+      stats,
+      ...pageMeta(stats.total, page, limit)
     });
 
   } catch (error) {

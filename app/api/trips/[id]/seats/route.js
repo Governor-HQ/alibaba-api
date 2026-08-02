@@ -6,10 +6,15 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { expireStaleHolds } from '@/lib/seat-holds';
 
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
+
+    // Lazy reconciliation: flip any lapsed, never-paid holds to 'cancelled' before
+    // reading availability. The filter below is still the safety net.
+    await expireStaleHolds();
 
     // Get the trip + bus info (we need total_seats to build the full map)
     const tripResult = await pool.query(

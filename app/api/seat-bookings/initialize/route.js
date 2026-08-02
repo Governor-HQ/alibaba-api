@@ -13,6 +13,7 @@
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { makeRef } from '@/lib/ref';
+import { expireStaleHolds } from '@/lib/seat-holds';
 import jwt from 'jsonwebtoken';
 const JWT_SECRET = process.env.JWT_SECRET || 'alibaba_jwt_secret_change_this';
 function getUserFromToken(req) {
@@ -69,6 +70,10 @@ export async function POST(request) {
         { status: 400 }
       );
     }
+
+    // Reconcile lapsed holds to 'cancelled' first, so a seat abandoned by someone
+    // else is both freed AND its stale row cleared before we compute availability.
+    await expireStaleHolds();
 
     // Which seats are already taken (pending or confirmed both count).
     // A seat is FREE if it's cancelled OR its hold has expired — an abandoned

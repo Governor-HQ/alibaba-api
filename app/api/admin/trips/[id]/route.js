@@ -5,6 +5,7 @@
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { requireAdmin, logAdminAction } from '@/lib/admin-auth';
+import { expireStaleHolds } from '@/lib/seat-holds';
 
 export async function PATCH(request, { params }) {
   const _auth = await requireAdmin(request, 'trips_manage'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
@@ -42,6 +43,10 @@ export async function DELETE(request, { params }) {
 
   try {
     const { id } = await params;
+
+    // Reconcile lapsed holds first so abandoned/expired holds (already-free seats)
+    // don't falsely count as "active bookings" and block an otherwise-deletable trip.
+    await expireStaleHolds();
 
     // Protect customers — don't allow deleting a trip that already has bookings
     const existingBookings = await pool.query(

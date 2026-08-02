@@ -6,6 +6,7 @@
 
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
+import { expireStaleHolds } from '@/lib/seat-holds';
 
 export async function GET(request) {
   try {
@@ -18,6 +19,10 @@ export async function GET(request) {
         { status: 400 }
       );
     }
+
+    // Reconcile lapsed holds before counting seats, so seats_available reflects
+    // reality (the count query's expiry filter is the safety net).
+    await expireStaleHolds();
 
     // Get all upcoming scheduled trips for this route, with bus info
     // and a count of how many seats are already booked (paid or pending)

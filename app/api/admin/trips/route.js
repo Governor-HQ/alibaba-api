@@ -5,13 +5,25 @@
 import pool from '@/lib/db';
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin-auth';
+import { expireStaleHolds } from '@/lib/seat-holds';
+import { parsePaging, pageMeta } from '@/lib/paginate';
 
 export async function GET(request) {
   const _auth = await requireAdmin(request, 'trips_manage'); if (!_auth.ok) return NextResponse.json({ success:false, error:_auth.error }, { status:_auth.status });
 
   try {
+    // Reconcile lapsed holds so per-trip seats_booked/seats_available are accurate.
+    await expireStaleHolds();
+
+    const { page, limit, offset } = parsePaging(request);
+
+    // "Upcoming Trips" card + pager total, across ALL trips (not just the page).
+    const stats = (await pool.query(
+      `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='scheduled')::int AS upcoming FROM trips`
+    )).rows[0];
+
     const result = await pool.query(
-      `SELECT 
+      `SELECT
         t.id, t.departure_date, t.departure_time, t.status, t.driver_id, t.trip_status,
         r.id as route_id, r.origin, r.destination, r.price,
         b.id as bus_id, b.name as bus_name, b.total_seats,
@@ -21,7 +33,9 @@ export async function GET(request) {
        FROM trips t
        JOIN routes r ON t.route_id = r.id
        JOIN buses b ON t.bus_id = b.id
-       ORDER BY t.departure_date DESC, t.departure_time DESC`
+       ORDER BY t.departure_date DESC, t.departure_time DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
 
     const trips = result.rows.map(t => ({
@@ -32,7 +46,7 @@ export async function GET(request) {
       seats_available: t.total_seats - parseInt(t.seats_booked)
     }));
 
-    return NextResponse.json({ success: true, trips });
+    return NextResponse.json({ success: true, trips, stats, ...pageMeta(stats.total, page, limit) });
   } catch (error) {
     console.error('Error fetching trips:', error);
     return NextResponse.json({ success: false, error: 'Failed to fetch trips' }, { status: 500 });
